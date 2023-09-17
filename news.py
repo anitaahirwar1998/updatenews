@@ -9,6 +9,9 @@ import nltk
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from nltk.sentiment import SentimentIntensityAnalyzer
+nltk.download('punkt')
+nltk.download('wordnet')
+nltk.download('stopwords')
 creds = ServiceAccountCredentials.from_json_keyfile_name('./gssep-399015-22a26cd898e7.json')
 client = gspread.authorize(creds)
 gs = client.open('Stock Database Sep23')
