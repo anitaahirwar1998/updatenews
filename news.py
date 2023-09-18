@@ -216,10 +216,22 @@ def get_news_contain(url,channel="Times of India"):
         return article_body
       if channel in("The Hindu Businessline","The Hindu"):
         art_text=soup.find("div",{"itemprop":"articleBody"}).text
-        return art_text[:art_text.lower().index("\ncomments\n")]
+        if "\ncomments\n" in art_text.lower():
+          return art_text[:art_text.lower().index("\ncomments\n")]
+        else:
+          return art_text
       if channel in("Business Today"):
         art_text=soup.find("div",{"class":"story-with-main-sec"}).text
-        return art_text[:art_text.lower().index("also read")]
+        if "also read" in art_text.lower():
+          return art_text[:art_text.lower().index("also read")]
+        else:
+          return art_text
+      if channel in("Investing.com"):
+        art_text=soup.find("section",{"class":"article-item-content"}).text
+        if "original post" in art_text.lower():
+          return art_text[:art_text.lower().index("original post")]
+        else:
+          return art_text
       else:
         return None
     except requests.exceptions.RequestException as e:
