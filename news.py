@@ -1,106 +1,133 @@
 import datetime
 import gspread
-from gspread_dataframe import set_with_dataframe
 import pandas as pd
-from oauth2client.service_account import ServiceAccountCredentials
 import multiprocessing
 import time
 import nltk
+import requests
+from bs4 import BeautifulSoup
+import json
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from nltk.sentiment import SentimentIntensityAnalyzer
+from nltk.corpus import stopwords
+import string
+import re
+from oauth2client.service_account import ServiceAccountCredentials
+from gspread_dataframe import set_with_dataframe
+
+# Download NLTK data
 nltk.download('punkt')
 nltk.download('wordnet')
 nltk.download('stopwords')
+nltk.download('vader_lexicon')
+
+# Define a function to remove HTML tags from text
+def remove_html_tags(text):
+    pattern = re.compile('<.*?>')
+    return pattern.sub(r'', text)
+
+# Define a function to remove URLs from text
+def remove_url(text):
+    pattern = re.compile(r'https?://\S+|www\.\S+')
+    return pattern.sub(r'', text)
+
+# Define a function to remove punctuation from text
+def remove_punctuation(text):
+    exclude = string.punctuation
+    return text.translate(str.maketrans('', '', exclude))
+
+# Define a function to remove stopwords from text
+def remove_stopwords(text):
+    new_text = []
+    for word in text.split():
+        if word not in stopwords.words('english'):
+            new_text.append(word)
+    return ' '.join(new_text)
+
+# Initialize Google Sheets
 creds = ServiceAccountCredentials.from_json_keyfile_name('./gssep-399015-22a26cd898e7.json')
 client = gspread.authorize(creds)
 gs = client.open('Stock Database Sep23')
-sheet_pos=gs.worksheet('Positive_Words')
-sheet_neg=gs.worksheet('Negative_Words')
-all_record_pos=sheet_pos.get_all_records()
-pos_df=pd.DataFrame(all_record_pos)
-all_record_neg=sheet_neg.get_all_records()
-neg_df=pd.DataFrame(all_record_neg)
-nltk.download('vader_lexicon')
-from nltk.sentiment import SentimentIntensityAnalyzer
+sheet_pos = gs.worksheet('Positive_Words')
+sheet_neg = gs.worksheet('Negative_Words')
+all_record_pos = sheet_pos.get_all_records()
+pos_df = pd.DataFrame(all_record_pos)
+all_record_neg = sheet_neg.get_all_records()
+neg_df = pd.DataFrame(all_record_neg)
+
+# Initialize the Sentiment Intensity Analyzer
+sid = SentimentIntensityAnalyzer()
+
+# Function to analyze sentiment of a text
 def analyze_sentiment(text):
-    sid = SentimentIntensityAnalyzer()
     sentiment_scores = sid.polarity_scores(text)
     return sentiment_scores['compound'] * 100
+
+# Function to calculate positivity score
 def calculate_positivity_score(positive_count, negative_count):
     total_count = positive_count + negative_count
     positivity_score = (positive_count - negative_count) / total_count * 100 if total_count != 0 else 0
     return round(positivity_score, 2)
+
+# Function to predict stock sentiment
 def predict_stock_sentiment(sentence):
-    import re
+    try:
+        clean_text = remove_punctuation(remove_html_tags(remove_url(sentence.lower())))
+        words = remove_stopwords(clean_text)
 
-    def remove_html_tags(text):
-        pattern = re.compile('<.*?>')
-        return pattern.sub(r'', text)
+        positive_keywords = [WordNetLemmatizer().lemmatize(remove_punctuation(remove_html_tags(word.lower())), pos='v') for word in pos_df['words']]
+        negative_keywords = [WordNetLemmatizer().lemmatize(remove_punctuation(remove_html_tags(word.lower())), pos='v') for word in neg_df['words']]
+        positive_count = 0
+        negative_count = 0
 
-    def remove_url(text):
-        pattern = re.compile(r'https?://\S+|www\.\S+')
-        return pattern.sub(r'', text)
+        lemmatizer = WordNetLemmatizer()
 
-    import string
-    exclude = string.punctuation
+        for word in words.split():
+            try:
+                lemma = lemmatizer.lemmatize(word, pos='v')
+                cleaned_word = remove_punctuation(remove_html_tags(word.lower()))
+                if any(keyword.lower() in cleaned_word for keyword in positive_keywords):
+                    positive_count += 1
+            except Exception as e:
+                print(f"Error processing word: {e}")
 
-    def remove_punctuation(text):
-        return text.translate(str.maketrans('', '', exclude))
+        for phrase in negative_keywords:
+            try:
+                if phrase.lower() in sentence.lower():
+                    negative_count += 1
+            except Exception as e:
+                print(f"Error processing negative phrase: {e}")
 
-    from nltk.corpus import stopwords
+        for phrase in positive_keywords:
+            try:
+                if phrase.lower() in sentence.lower():
+                    positive_count += 1
+            except Exception as e:
+                print(f"Error processing positive phrase: {e}")
 
-    def remove_stopwords(text):
-        new_text = []
-        for word in text.split():
-            if word not in stopwords.words('english'):
-                new_text.append(word)
-        return ' '.join(new_text)
+        positivity_score = calculate_positivity_score(positive_count, negative_count)
 
-    clean_word = remove_punctuation(remove_html_tags(remove_url(sentence.lower())))
-    words = remove_stopwords(clean_word)
+        return positivity_score
 
-    positive_keywords = [WordNetLemmatizer().lemmatize(remove_punctuation(remove_html_tags(word.lower())), pos='v') for word in pos_df['words']]
-    negative_keywords = [WordNetLemmatizer().lemmatize(remove_punctuation(remove_html_tags(word.lower())), pos='v') for word in neg_df['words']]
-    positive_count = 0
-    negative_count = 0
+    except Exception as e:
+        print(f"Error in predict_stock_sentiment: {e}")
+        return 0  # Return a neutral score or handle the error as needed
 
-    lemmatizer = WordNetLemmatizer()
-
-    for word in words.split():
-        lemma = lemmatizer.lemmatize(word, pos='v')
-        cleaned_word = remove_punctuation(remove_html_tags(word.lower()))
-        if any(keyword.lower() in cleaned_word for keyword in positive_keywords):
-            positive_count += 1
-    for phrase in negative_keywords:
-        if phrase.lower() in sentence.lower():
-            negative_count += 1
-    for phrase in positive_keywords:
-        if phrase.lower() in sentence.lower():
-            positive_count += 1
-
-    positivity_score = calculate_positivity_score(positive_count, negative_count)
-
-    return positivity_score
+# Function to shorten a URL
 def short_link(link):
-    import urllib.parse
-    import urllib.request
     endpoint = 'http://tinyurl.com/api-create.php'
     long_url = link
     params = {'url': long_url}
-    encoded_params = urllib.parse.urlencode(params).encode('utf-8')
-    response = urllib.request.urlopen(endpoint + '?' + encoded_params.decode('utf-8'))
-    if response.status == 200:
-        short_url = response.read().decode('utf-8')
+    response = requests.get(endpoint, params=params)
+    if response.status_code == 200:
+        short_url = response.text
         return short_url
     else:
         return 'Error: HTTP'
+
+# Function to fetch news data for a given stock URL
 def get_newsbyticker(url, stock="N/A"):
-    import datetime
-    import requests
-    from bs4 import BeautifulSoup
-    import json
-    import pandas as pd
     def parse_date(date_string):
         return datetime.datetime.strptime(date_string, "%Y-%m-%dT%H:%M:%S.%fZ").date()
 
@@ -147,22 +174,89 @@ def get_newsbyticker(url, stock="N/A"):
     df['Time'] = df['Date Obj'].apply(parse_time)
     df["URL"] = df["URL"].apply(short_link)
     df["Stock"] = stock
+
     sorted_df = df[["Stock", "Date", "Time", "Title", "URL", "Channel", "Description"]].copy()
     return sorted_df
+def get_news_contain(url,channel="Times of India"):
+    import requests
+    from bs4 import BeautifulSoup
+    import json
+    import re
+    try:
+      res = requests.get(url)
+      soup = BeautifulSoup(res.text, features="html.parser")
+      if channel in("Times of India","Economic Times"):
+        script_tag=soup.find_all("script",{"type":"application/ld+json"})[1]
+        script_data = script_tag.string.strip()
+        data = json.loads(script_data)
+        return data.get("articleBody")
+      if channel in("Bloomberg Quint"):
+        if len(soup.find_all("script",{"type":"application/ld+json"}))<3:
+          script_tag=soup.find_all("script",{"type":"application/ld+json"})[1]
+          script_data = script_tag.string.strip()
+          data = json.loads(script_data)
+          return data.get("articleBody")
+        else:
+          script_tag=soup.find_all("script",{"type":"application/ld+json"})[2]
+          script_data = script_tag.string.strip()
+          data = json.loads(script_data)
+          return data.get("articleBody")
+      if channel in("News18"):
+        script_tag=soup.find_all("script",{"type":"application/ld+json"})[2]
+        script_data = script_tag.string.strip()
+        data = json.loads(script_data)
+        return data.get("articleBody")
+      if channel=="Moneycontrol":
+        script_elements = soup.find_all("script", {"type": "application/ld+json"})
+        script_text = script_elements[2].text.strip()
+        script_text = script_text.replace('<script type="application/ld+json">', '').replace('</script>', '')
+        script_text = re.sub(r"[\x00-\x1F\x7F-\x9F]", "", script_text)
+        data = json.loads(script_text)
+        article_body = data[0].get("articleBody", "")
+        return article_body
+      if channel in("The Hindu Businessline","The Hindu"):
+        art_text=soup.find("div",{"itemprop":"articleBody"}).text
+        return art_text[:art_text.lower().index("\ncomments\n")]
+      if channel in("Business Today"):
+        art_text=soup.find("div",{"class":"story-with-main-sec"}).text
+        return art_text[:art_text.lower().index("also read")]
+      else:
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"HTTP request error: {e}")
+        return None
+
+    except (ValueError, IndexError, AttributeError, KeyError) as e:
+        print(f"Error processing the page: {e}")
+        return None
+# Function to fetch news content in parallel
+def fetch_news_content(row):
+    url = row["URL"]
+    channel = row["Channel"]
+    content = get_news_contain(url, channel)
+    return content
 def fetch_news_data(row):
     name = row["Name"]
     url = row["URL"]
     df = get_newsbyticker(url, name)
     return df
+# Main function
 def main():
+    # Initialize Google Sheets
     creds = ServiceAccountCredentials.from_json_keyfile_name('./gssep-399015-22a26cd898e7.json')
     client = gspread.authorize(creds)
     gs = client.open('Stock Database Sep23')
+
+    # Fetch data from the "Raw" worksheet
     sheet = gs.worksheet("Raw")
     sheet_all_record = sheet.get_all_records()
     sheet_df = pd.DataFrame(sheet_all_record)
+
+    # Filter out rows with empty URLs
     sort_df = sheet_df[["Name", "URL"]].copy()
     filtered_df = sort_df[sort_df["URL"] != ''].copy()
+
+    # Start fetching news data in parallel
     start_time = time.time()
     if __name__ == "__main__":
         pool = multiprocessing.Pool(processes=12)
@@ -173,19 +267,32 @@ def main():
         final_df = pd.concat(dfs, ignore_index=True)
     end_time = time.time()
     execution_time = end_time - start_time
-    print(f"Total execution time: {execution_time} seconds")
-    print(final_df.shape)
+    print(f"Total execution time for fetching news data: {execution_time} seconds")
+    print(f"Shape of the final news data dataframe: {final_df.shape}")
     thirty_days_ago = datetime.datetime.now() - datetime.timedelta(days=30)
-    seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
     filtered_df_last_30_days = final_df[final_df['Date'] >= thirty_days_ago.date()].reset_index(drop=True)
-    filtered_df_last_30_days["Deep Score"] = filtered_df_last_30_days['Description'].apply(predict_stock_sentiment)
-    filtered_df_last_30_days['Normal Score'] = filtered_df_last_30_days['Title'].apply(analyze_sentiment)
-    sorted_30days = filtered_df_last_30_days[['Stock', 'Date', 'Time', 'Title', 'URL', 'Channel', "Normal Score", "Deep Score"]].copy()
+    sorted_30days = filtered_df_last_30_days[['Stock', 'Date', 'Time', 'Title', 'URL', 'Channel']].copy()
+    seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
     filtered_df_last_7_days = sorted_30days[sorted_30days['Date'] >= seven_days_ago.date()].reset_index(drop=True)
+    start_time = time.time()
+    if __name__ == "__main__":
+        pool = multiprocessing.Pool(processes=12)
+        content_rows = filtered_df_last_7_days.to_dict(orient='records')
+        news_content_list = pool.map(fetch_news_content, content_rows)
+        pool.close()
+        pool.join()
+        filtered_df_last_7_days["Content"] = news_content_list
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f"Total execution time for fetching news content: {execution_time} seconds")
+    filtered_df_last_7_days["Deep Score"] = filtered_df_last_7_days['Content'].apply(predict_stock_sentiment)
+    filtered_df_last_7_days['Normal Score'] = filtered_df_last_7_days['Title'].apply(analyze_sentiment)
+    filtered_df_last_7_days=filtered_df_last_7_days[['Stock', 'Date', 'Time', 'Title', 'URL', 'Channel','Normal Score',"Deep Score"]].copy()
     out_gs = client.open('News Database Sep 2023')
     out_sheet = out_gs.worksheet("News<30Days")
     out_sheet.clear()
     set_with_dataframe(out_sheet, sorted_30days)
+
     out_sheet1 = out_gs.worksheet("News<7Days")
     out_sheet1.clear()
     set_with_dataframe(out_sheet1, filtered_df_last_7_days)
