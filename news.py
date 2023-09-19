@@ -300,6 +300,7 @@ def main():
     filtered_df_last_7_days["Deep Score"] = filtered_df_last_7_days['Content'].apply(predict_stock_sentiment)
     filtered_df_last_7_days['Normal Score'] = filtered_df_last_7_days['Title'].apply(analyze_sentiment)
     filtered_df_last_7_days=filtered_df_last_7_days[['Stock', 'Date', 'Time', 'Title', 'URL', 'Channel','Normal Score',"Deep Score"]].copy()
+    filtered_df_last_7_days_sort=filtered_df_last_7_days.sort_values(by="Date",ascending=False).copy()
     out_gs = client.open('News Database Sep 2023')
     out_sheet = out_gs.worksheet("News<30Days")
     out_sheet.clear()
@@ -307,7 +308,7 @@ def main():
 
     out_sheet1 = out_gs.worksheet("News<7Days")
     out_sheet1.clear()
-    set_with_dataframe(out_sheet1, filtered_df_last_7_days)
+    set_with_dataframe(out_sheet1, filtered_df_last_7_days_sort)
 
 if __name__ == "__main__":
     main()
