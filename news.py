@@ -16,7 +16,6 @@ import re
 from oauth2client.service_account import ServiceAccountCredentials
 from gspread_dataframe import set_with_dataframe
 
-# Download NLTK data
 nltk.download('punkt')
 nltk.download('wordnet')
 nltk.download('stopwords')
