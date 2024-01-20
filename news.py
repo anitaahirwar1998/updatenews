@@ -31,7 +31,7 @@ def remove_url(text):
     pattern = re.compile(r'https?://\S+|www\.\S+')
     return pattern.sub(r'', text)
 
-# Define a function to remove punctuation from text
+# Define a function remove punctuation from text
 def remove_punctuation(text):
     exclude = string.punctuation
     return text.translate(str.maketrans('', '', exclude))
